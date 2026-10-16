@@ -1246,6 +1246,7 @@ def do_codegen(ctx, env=None, level="error"):
             # is free once injected.
             _inject_pch_into_cmake(ctx)
             _inject_debug_diet_into_cmake(ctx)
+            _inject_android_table_reloc_pch(ctx)
             return out
         targets = _heal.unresolved_calls_from_text(out)
         if not targets and (r.returncode in CXX_EXCEPTION_RC or "bad allocation" in out):
@@ -1997,6 +1998,55 @@ def _inject_debug_diet_into_cmake(ctx):
         "    target_compile_options(%s PRIVATE $<$<CONFIG:RelWithDebInfo>:-gline-tables-only>)\n"
         "endif()\n" % ctx.name)
     ctx.log("  wired -gline-tables-only (RelWithDebInfo) into CMakeLists")
+
+
+def _inject_android_table_reloc_pch(ctx):
+    """Multi-module ports: the ENTRY function table's natural slot
+    (IMAGE_BASE + IMAGE_SIZE) can collide with a companion XEX's fixed load
+    address -- FIFA Street's entry table [0x821C0000, 0x82412E90) vs
+    fifadllzf.xex.dll's image [0x82300000, 0x83EC0000): the companion's guest
+    image mapping then fails against the already-allocated table, and the
+    desktop runtime's InitializeFunctionTable gate refuses it outright.
+    Android folds the entry table above every module image (0x8C000000) in the
+    SDK patch android/patches/rexglue-sdk-v0.10.0-android-entry-table-reloc.patch;
+    this hook rewrites the generated PCH's REX_LOOKUP_FUNC so indirect calls
+    read the slots from that same address. The constant MUST stay in sync with
+    kEntryTableBaseOverride in function_dispatcher.cpp. Guarded by __ANDROID__
+    so desktop builds keep the natural slot byte-identical (the SDK patch is
+    Android-only). Idempotent; only fires for entry projects with [[modules]].
+    Set REXAUTO_NO_TABLE_RELOC=1 to opt out."""
+    if os.environ.get("REXAUTO_NO_TABLE_RELOC"):
+        return
+    if os.path.basename(ctx.gen) != "default":
+        return
+    if not extra_modules(ctx):
+        return
+    pch = os.path.join(ctx.gen, "%s_pch.h" % ctx.name)
+    if not os.path.exists(pch):
+        return
+    txt = open(pch, encoding="utf-8", errors="ignore").read()
+    if "rexauto-entry-table-reloc" in txt:
+        return
+    old = ("#define REX_LOOKUP_FUNC(x, y) \\\n"
+           "  (*(PPCFunc**)(x + REX_IMAGE_BASE + REX_IMAGE_SIZE + "
+           "(u64(u32(y) - REX_CODE_BASE) * 2)))")
+    if old not in txt:
+        ctx.log("  table-reloc: REX_LOOKUP_FUNC pattern not found in %s; skipped"
+                % os.path.basename(pch))
+        return
+    new = ("// rexauto-entry-table-reloc: Android folds the ENTRY function table at\n"
+           "// 0x8C000000 because its natural slot collides with a companion XEX\n"
+           "// image; keep in sync with kEntryTableBaseOverride in the SDK patch\n"
+           "// (android/patches/rexglue-sdk-v0.10.0-android-entry-table-reloc.patch).\n"
+           "// Desktop keeps the natural slot byte-identical.\n"
+           "#ifdef __ANDROID__\n"
+           "#define REX_LOOKUP_FUNC(x, y) \\\n"
+           "  (*(PPCFunc**)(x + 0x8C000000 + (u64(u32(y) - REX_CODE_BASE) * 2)))\n"
+           "#else\n" + old + "\n#endif")
+    txt = txt.replace(old, new)
+    open(pch, "w", encoding="utf-8", newline="\n").write(txt)
+    ctx.log("  wired Android entry-table relocation into %s"
+            % os.path.basename(pch))
 
 
 def _cpp_str(s):

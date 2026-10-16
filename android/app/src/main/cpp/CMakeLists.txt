@@ -93,6 +93,64 @@ target_compile_options(recomp PRIVATE
 set_target_properties(recomp PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 target_link_libraries(recomp PUBLIC rex::runtime rexui)
 
+# --- recompiled companion modules (multi-XEX ports) ---------------------------
+# Codegen mirrors every manifest [[modules]] entry into
+# generated/default/module_registry.cpp (RegisterRecompiledModules) and emits
+# one generated/<module>/ dir per companion. The runtime loads each companion
+# when the guest XexLoadImage's it: DynamicLibrary(shared_lib_name) where
+# shared_lib_name = "<project>_<target>" -- Android dlopen resolves a bare name
+# as lib<name>.so in the app's native lib dir, so the CMake target name IS the
+# packaged .so name. AGP packages every shared library the CMake project
+# builds; one SHARED target per generated/<module> dir, default lib visibility
+# so ReXModule_Register / ReXModule_GetImageInfo stay exported.
+file(GLOB _rex_module_dirs RELATIVE "${REX_GEN_DIR}/.." "${REX_GEN_DIR}/../*")
+foreach(_rex_mod_name ${_rex_module_dirs})
+    if(_rex_mod_name STREQUAL "default")
+        continue()
+    endif()
+    set(_rex_mod_gen "${REX_GEN_DIR}/../${_rex_mod_name}")
+    if(NOT EXISTS "${_rex_mod_gen}/sources.cmake")
+        continue()
+    endif()
+    set(_REXGLUE_RESTORE_GENERATED_SOURCES FALSE)
+    if(DEFINED GENERATED_SOURCES)
+        set(_REXGLUE_PREVIOUS_GENERATED_SOURCES ${GENERATED_SOURCES})
+        set(_REXGLUE_RESTORE_GENERATED_SOURCES TRUE)
+    endif()
+    include("${_rex_mod_gen}/sources.cmake")
+    set(_rex_mod_sources ${GENERATED_SOURCES})
+    if(_REXGLUE_RESTORE_GENERATED_SOURCES)
+        set(GENERATED_SOURCES ${_REXGLUE_PREVIOUS_GENERATED_SOURCES})
+    else()
+        unset(GENERATED_SOURCES)
+    endif()
+    unset(_REXGLUE_PREVIOUS_GENERATED_SOURCES)
+    unset(_REXGLUE_RESTORE_GENERATED_SOURCES)
+    set(_rex_mod_abs_sources "")
+    foreach(_rex_mod_src ${_rex_mod_sources})
+        if(IS_ABSOLUTE "${_rex_mod_src}")
+            list(APPEND _rex_mod_abs_sources "${_rex_mod_src}")
+        else()
+            list(APPEND _rex_mod_abs_sources "${_rex_mod_gen}/${_rex_mod_src}")
+        endif()
+    endforeach()
+    unset(_rex_mod_sources)
+    set(_rex_mod_target "${REX_APP_NAME}_${_rex_mod_name}")
+    add_library(${_rex_mod_target} SHARED ${_rex_mod_abs_sources})
+    target_include_directories(${_rex_mod_target} PRIVATE
+        "${REX_PORT_DIR}" "${REX_PORT_DIR}/src" "${_rex_mod_gen}")
+    target_compile_options(${_rex_mod_target} PRIVATE
+        -g0 -O3
+        -fno-rtti
+        -fno-math-errno -fno-trapping-math
+        -Wno-unused-variable -Wno-unused-label -Wno-unused-but-set-variable
+        -Wno-unused-value -Wno-parentheses-equality)
+    set_target_properties(${_rex_mod_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+    target_link_libraries(${_rex_mod_target} PRIVATE rex::runtime)
+    list(APPEND _rex_module_targets ${_rex_mod_target})
+    message(STATUS "rexauto module target: ${_rex_mod_target} (${_rex_mod_gen})")
+endforeach()
+
 # --- app library loaded by SDLActivity ----------------------------------------
 add_library(main SHARED
     android_gamepad.cpp
@@ -108,6 +166,11 @@ target_compile_definitions(main PRIVATE
     REXGLUE_BUILD_CONFIG="$<CONFIG>"
     REX_APP_NAME="${REX_APP_NAME}")
 target_link_libraries(main PRIVATE recomp rex::runtime rexui)
+# Companion module libraries are dlopen'd by the runtime, not linked; make the
+# build (and therefore APK packaging) depend on them explicitly.
+if(_rex_module_targets)
+    add_dependencies(main ${_rex_module_targets})
+endif()
 if(REX_HAVE_ADRENOTOOLS)
     target_compile_definitions(main PRIVATE REX_HAVE_ADRENOTOOLS=1)
     target_link_libraries(main PRIVATE adrenotools)

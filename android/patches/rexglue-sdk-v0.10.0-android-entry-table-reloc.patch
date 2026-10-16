@@ -1,0 +1,155 @@
+diff --git a/include/rex/system/function_dispatcher.h b/include/rex/system/function_dispatcher.h
+index 19adf76..a25374e 100644
+--- a/include/rex/system/function_dispatcher.h
++++ b/include/rex/system/function_dispatcher.h
+@@ -120,6 +120,11 @@ class FunctionDispatcher : public IModuleRegistrar {
+     uint32_t code_size;
+     uint32_t image_base;
+     uint32_t image_size;
++    // Actual guest span of this module's function table. Equal to
++    // image_base + image_size unless the entry table was relocated (Android;
++    // see InitializeFunctionTable), so overlap checks must use these.
++    uint32_t table_base;
++    uint32_t table_size;
+     uint32_t next_thunk_address;
+     uint32_t thunk_limit;
+   };
+diff --git a/include/rex/system/xmemory.h b/include/rex/system/xmemory.h
+index 0c39a42..f4b50db 100644
+--- a/include/rex/system/xmemory.h
++++ b/include/rex/system/xmemory.h
+@@ -547,11 +547,12 @@ class Memory {
+   //==========================================================================
+   // Recompiled Code Function Table API
+   //==========================================================================
+-  // Per-module function dispatch table at IMAGE_BASE + IMAGE_SIZE, indexed by
+-  // (guest_addr - code_base) * 2. Internally locked: callers may invoke from
+-  // any thread.
++  // Per-module function dispatch table, indexed by (guest_addr - code_base) * 2.
++  // table_base must be 0 for the natural placement (IMAGE_BASE + IMAGE_SIZE) or
++  // an explicit guest address (Android entry-table relocation; see the
++  // FunctionDispatcher). Internally locked: callers may invoke from any thread.
+   bool InitializeFunctionTable(uint32_t code_base, uint32_t code_size, uint32_t image_base,
+-                               uint32_t image_size);
++                               uint32_t image_size, uint32_t table_base = 0);
+   bool DestroyFunctionTable(uint32_t code_base);
+   // Returns false if guest_address is outside every registered module range.
+   bool SetFunction(uint32_t guest_address, PPCFunc* host_function);
+diff --git a/src/system/function_dispatcher.cpp b/src/system/function_dispatcher.cpp
+index db2c3d2..d2f45d3 100644
+--- a/src/system/function_dispatcher.cpp
++++ b/src/system/function_dispatcher.cpp
+@@ -38,6 +38,19 @@ FunctionDispatcher* GetBoundFunctionDispatcher() {
+ 
+ }  // namespace
+ 
++#ifdef __ANDROID__
++// rexauto entry-table relocation
++// (android/patches/rexglue-sdk-v0.10.0-android-entry-table-reloc.patch).
++// The natural entry table slot (IMAGE_BASE + IMAGE_SIZE) collides with the
++// fixed load address of companion XEX images on multi-module ports: FIFA
++// Street's entry table would cover [0x821C0000, 0x82412E90) while
++// fifadllzf.xex.dll maps at [0x82300000, 0x83EC0000). Android folds the entry
++// table above every module image instead. The generated PCH reads indirect
++// calls through the same constant (rexauto rewrites REX_LOOKUP_FUNC), so the
++// two values MUST stay in sync. Desktop keeps the natural slot byte-identical.
++constexpr uint32_t kEntryTableBaseOverride = 0x8C000000u;
++#endif
++
+ static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* /*base*/) {
+   const uint32_t target = ctx.last_indirect_target;
+   // Tolerant mode (REX_HEAL_DISCOVER, the launcher's "tolerant" switch): log
+@@ -223,25 +236,44 @@ bool FunctionDispatcher::InitializeFunctionTable(uint32_t code_base, uint32_t co
+     return false;
+   }
+ 
+-  uint32_t new_table_end = image_base + image_size + (code_size + kThunkReserveSize) * 2;
++  uint32_t new_table_size = (code_size + kThunkReserveSize) * 2;
++  uint32_t new_table_base = image_base + image_size;
++#ifdef __ANDROID__
++  if (is_entrypoint) {
++    new_table_base = kEntryTableBaseOverride;
++  }
++#endif
++  uint32_t new_table_end = new_table_base + new_table_size;
+   uint32_t new_code_end = code_base + code_size + kThunkReserveSize;
++  auto overlaps = [](uint32_t a0, uint32_t a1, uint32_t b0, uint32_t b1) {
++    return a0 < b1 && b0 < a1;
++  };
+   for (const auto& existing : module_tables_) {
+-    uint32_t existing_table_end =
+-        existing.image_base + existing.image_size + (existing.code_size + kThunkReserveSize) * 2;
++    uint32_t existing_image_end = existing.image_base + existing.image_size;
++    uint32_t existing_table_end = existing.table_base + existing.table_size;
+     uint32_t existing_code_end = existing.code_base + existing.code_size + kThunkReserveSize;
+-    if (image_base < existing_table_end && new_table_end > existing.image_base) {
+-      REXLOG_ERROR("Module image range [{:08X}, {:08X}) overlaps existing [{:08X}, {:08X})",
+-                   image_base, new_table_end, existing.image_base, existing_table_end);
++    bool image_or_table_hit =
++        overlaps(image_base, image_base + image_size, existing.image_base, existing_image_end) ||
++        overlaps(image_base, image_base + image_size, existing.table_base, existing_table_end) ||
++        overlaps(new_table_base, new_table_end, existing.image_base, existing_image_end) ||
++        overlaps(new_table_base, new_table_end, existing.table_base, existing_table_end);
++    if (image_or_table_hit) {
++      REXLOG_ERROR(
++          "Module image=[{:08X}, {:08X}) table=[{:08X}, {:08X}) overlaps existing "
++          "image=[{:08X}, {:08X}) table=[{:08X}, {:08X})",
++          image_base, image_base + image_size, new_table_base, new_table_end, existing.image_base,
++          existing_image_end, existing.table_base, existing_table_end);
+       return false;
+     }
+-    if (code_base < existing_code_end && new_code_end > existing.code_base) {
++    if (overlaps(code_base, new_code_end, existing.code_base, existing_code_end)) {
+       REXLOG_ERROR("Module code range [{:08X}, {:08X}) overlaps existing [{:08X}, {:08X})",
+                    code_base, new_code_end, existing.code_base, existing_code_end);
+       return false;
+     }
+   }
+ 
+-  if (!memory_->InitializeFunctionTable(code_base, code_size, image_base, image_size)) {
++  if (!memory_->InitializeFunctionTable(code_base, code_size, image_base, image_size,
++                                        new_table_base)) {
+     REXLOG_ERROR("Failed to initialize guest memory function table");
+     return false;
+   }
+@@ -251,6 +283,8 @@ bool FunctionDispatcher::InitializeFunctionTable(uint32_t code_base, uint32_t co
+       .code_size = code_size,
+       .image_base = image_base,
+       .image_size = image_size,
++      .table_base = new_table_base,
++      .table_size = new_table_size,
+       .next_thunk_address = code_base + code_size,
+       .thunk_limit = code_base + code_size + kThunkReserveSize,
+   });
+@@ -259,8 +293,11 @@ bool FunctionDispatcher::InitializeFunctionTable(uint32_t code_base, uint32_t co
+     entrypoint_code_base_ = code_base;
+   }
+ 
+-  REXLOG_INFO("Function table initialized for module: code={:08X}-{:08X}, image={:08X}-{:08X}",
+-              code_base, code_base + code_size, image_base, image_base + image_size);
++  REXLOG_INFO(
++      "Function table initialized for module: code={:08X}-{:08X}, image={:08X}-{:08X}, "
++      "table={:08X}-{:08X}",
++      code_base, code_base + code_size, image_base, image_base + image_size, new_table_base,
++      new_table_end);
+   return true;
+ }
+ 
+diff --git a/src/system/xmemory.cpp b/src/system/xmemory.cpp
+index 612ac56..071cc1a 100644
+--- a/src/system/xmemory.cpp
++++ b/src/system/xmemory.cpp
+@@ -831,9 +831,11 @@ bool Memory::Restore(stream::ByteStream* stream) {
+ //=============================================================================
+ 
+ bool Memory::InitializeFunctionTable(uint32_t code_base, uint32_t code_size, uint32_t image_base,
+-                                     uint32_t image_size) {
++                                     uint32_t image_size, uint32_t table_base) {
+   constexpr uint32_t kThunkReserveSize = runtime::FunctionDispatcher::kThunkReserveSize;
+-  uint32_t table_base = image_base + image_size;
++  if (table_base == 0) {
++    table_base = image_base + image_size;
++  }
+   uint32_t table_size = (code_size + kThunkReserveSize) * 2;
+ 
+   REXSYS_DEBUG(
