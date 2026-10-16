@@ -1,0 +1,13 @@
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 9c2fb84..f06769c 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -36,7 +36,7 @@ REXCVAR_DEFINE_BOOL(vulkan_require_geometry_shader, !REX_PLATFORM_MAC, "UI/Vulka
+                     "Require geometryShader support for Vulkan GPU emulation (disable to allow "
+                     "fallback primitive emulation paths)")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+-REXCVAR_DEFINE_BOOL(vulkan_require_fill_mode_non_solid, !REX_PLATFORM_MAC, "UI/Vulkan",
++REXCVAR_DEFINE_BOOL(vulkan_require_fill_mode_non_solid, false, "UI/Vulkan",
+                     "Require fillModeNonSolid support for Vulkan GPU emulation (disable to "
+                     "allow fallback to solid fill for line/point polygon modes)")
+     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
