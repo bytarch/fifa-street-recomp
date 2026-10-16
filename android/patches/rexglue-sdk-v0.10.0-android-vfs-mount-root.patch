@@ -1,7 +1,24 @@
 diff --git a/src/filesystem/virtual_file_system.cpp b/src/filesystem/virtual_file_system.cpp
 --- a/src/filesystem/virtual_file_system.cpp
 +++ b/src/filesystem/virtual_file_system.cpp
-@@ -148,6 +148,22 @@
+@@ -112,8 +112,14 @@
+   if (default_base_path_.empty() || normalized.empty()) {
+     return normalized;
+   }
+-  if (!rex::string::utf8_find_base_guest_path(normalized).empty()) {
+-    return normalized;  // already rooted at a device
++  // A drive-like root ("d:") canonicalizes away its trailing separator, and
++  // utf8_find_base_guest_path reports an empty base for it (no separator left
++  // to split on), so a bare "d:" would be treated as a relative path and be
++  // joined with the default base - turning it into "<device>\d:" which can
++  // never resolve. A drive root is already device-rooted; leave it alone.
++  if (!rex::string::utf8_find_base_guest_path(normalized).empty() ||
++      (normalized.size() >= 2 && normalized[1] == ':')) {
++    return normalized;  // already rooted at a device (or a drive-like root)
+   }
+   return std::string(rex::string::utf8_join_guest_paths(default_base_path_, normalized));
+ }
+@@ -148,6 +154,22 @@
  
    const auto& device = *it;
    auto relative_path = normalized_path.substr(device->mount_path().size());
