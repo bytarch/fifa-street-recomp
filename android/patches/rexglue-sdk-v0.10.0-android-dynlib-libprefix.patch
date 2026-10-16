@@ -12,7 +12,7 @@ diff --git a/src/core/dynlib_posix.cpp b/src/core/dynlib_posix.cpp
 +  // ("game_fifadllzf_xex"), while the packaged file is
 +  // libgame_fifadllzf_xex.so, so retry with the decoration an Android .so
 +  // always carries. Only for bare names: a path with a slash is explicit.
-+  if (!handle_ && path.filename().find('/') == std::string::npos) {
++  if (!handle_ && path.string().find('/') == std::string::npos) {
 +    std::string decorated = "lib" + path.string() + ".so";
 +    handle_ = dlopen(decorated.c_str(), flags);
 +  }
