@@ -733,6 +733,38 @@ def stage_setjmp(ctx):
     tu = getattr(ctx, "tu_xexp", None)
     ctx.log("scanning %s image for setjmp/longjmp (C++ exception support)"
             % ("PATCHED (title-update) " if tu else ""))
+    # A companion declared in the manifest makes EVERY project codegen recompile
+    # it too (one manifest, one codegen) -- right for the build, wrong here: the
+    # dump detect_setjmp scans is the ENTRY image, and walking a 27 MB engine
+    # module first costs minutes and can wedge the dump codegen on that module's
+    # unresolved tail calls, which skips setjmp detection entirely (FIFA Street:
+    # 802s then "codegen stuck on unresolved calls: 0x826DB470, ..."). Compile
+    # the entrypoint alone through a module-less copy of the manifest -- rexglue
+    # has no entry-only target flag, --target filters DLL modules only -- then
+    # restore the manifest and the codegen side products the stripped manifest
+    # rewrote (module_registry.cpp / dll_targets.cmake would come back with
+    # empty module lists).
+    orig_manifest = ctx.manifest
+    dump_manifest, saved_products = None, {}
+    if extra_modules(ctx):
+        lines = _heal._read_text(orig_manifest).replace("\r\n", "\n").splitlines(True)
+        keep, skipping = [], False
+        for ln in lines:
+            if ln.lstrip().startswith("# rexauto-module:"):
+                skipping = True
+                continue
+            if skipping and re.match(r"^\[[a-zA-Z]", ln):
+                skipping = False
+            if not skipping:
+                keep.append(ln)
+        dump_manifest = os.path.join(ctx.port, "%s_manifest.dump.toml" % ctx.name)
+        open(dump_manifest, "w", encoding="utf-8", newline="").write("".join(keep))
+        for name in ("module_registry.cpp", "dll_targets.cmake"):
+            p = os.path.join(ctx.gen, name)
+            if os.path.exists(p):
+                saved_products[p] = open(p, "rb").read()
+        ctx.manifest = dump_manifest
+        ctx._dump_entry_only = True
     try:
         blob = do_codegen(ctx, env={"REX_DUMP_IMAGE": image}, level="trace")
     except SdkMismatch:
@@ -740,6 +772,16 @@ def stage_setjmp(ctx):
     except SystemExit as ex:
         ctx.log("codegen for image dump failed -> skipping setjmp detection (%s)" % ex)
         return ctx.mark("setjmp", {"skipped": "codegen-fail"})
+    finally:
+        if dump_manifest:
+            ctx.manifest = orig_manifest
+            del ctx._dump_entry_only
+            try:
+                os.remove(dump_manifest)
+            except OSError:
+                pass
+            for p, data in saved_products.items():
+                open(p, "wb").write(data)
     if not os.path.exists(image):
         ctx.log("image dump produced nothing (rexglue lacks the dump-image patch) "
                 "-> skipping setjmp detection")
@@ -1186,7 +1228,10 @@ def do_codegen(ctx, env=None, level="error"):
         return do_codegen(parent, env=env, level=level)
     _normalize_toml_newlines(ctx)
     _normalize_function_overrides(ctx)
-    mods = extra_modules(ctx)
+    # stage_setjmp's image dump compiles the entrypoint alone (the dump is the
+    # entry image); without this the [[modules]] would be re-declared into the
+    # module-less manifest it hands us and the companion recompiled again.
+    mods = [] if getattr(ctx, "_dump_entry_only", False) else extra_modules(ctx)
     if mods:
         _declare_native_modules(ctx, mods)
     snap = _gen_snapshot(ctx)
