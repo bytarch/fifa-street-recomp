@@ -31,7 +31,7 @@ diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
    for (const auto& info : recompiled_modules_) {
      if (info.guest_path == normalized)
        return info;
-+    if (!want.empty() && SameName(info.guest_path, want)) {
++    if (!want.empty() && SameName(Name(info.guest_path), want)) {
 +      REXSYS_WARN("FindRecompiledModule: matched '{}' against registry entry '{}' by file name",
 +                  normalized, info.guest_path);
 +      return info;
