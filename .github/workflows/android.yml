@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           name='${{ inputs.name }}'
-          key=$({ git ls-files | grep -v -e '^android/' -e '^server/' -e '\.md$'; \
+          key=$({ git ls-files | grep -v -e '^android/' -e '^server/' -e '\.md$' -e '^tools/android_sdk\.sh$'; \
                   echo "url=${{ inputs.url }}"; \
                   echo "name=$name"; \
                   echo "runheal=${{ inputs.runheal }}"; \

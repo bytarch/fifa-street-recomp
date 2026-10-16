@@ -1,0 +1,26 @@
+diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
+index 697399c..6151d98 100644
+--- a/src/system/kernel_state.cpp
++++ b/src/system/kernel_state.cpp
+@@ -915,9 +915,21 @@ std::optional<KernelState::RecompiledModuleInfo> KernelState::FindRecompiledModu
+     std::string_view guest_path) {
+   auto global_lock = global_critical_region_.Acquire();
+   auto normalized = NormalizeGuestPath(guest_path);
++  // The guest names a companion by its BARE file name (FIFA Street opens
++  // "fifadllzf.xex.dll" itself, then XexLoadImages it), while LoadUserModule
++  // resolves the load against the executable's base path first and arrives
++  // here with "game:\fifadllzf.xex.dll". The registry is written from the
++  // manifest's guest_path, which is what the manifest had, so compare the file
++  // name as well: a mismatch leaves the recompiled module unwired and every
++  // call into the companion image fatals with "function not in function
++  // table". The registry holds a handful of entries, so the extra pass is free.
++  auto want_name = rex::string::utf8_find_name_from_guest_path(normalized);
+   for (const auto& info : recompiled_modules_) {
+     if (info.guest_path == normalized)
+       return info;
++    if (!want_name.empty() &&
++        rex::string::utf8_find_name_from_guest_path(info.guest_path) == want_name)
++      return info;
+   }
+   return std::nullopt;
+ }
