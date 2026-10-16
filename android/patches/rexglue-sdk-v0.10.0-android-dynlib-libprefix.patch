@@ -1,0 +1,22 @@
+diff --git a/src/core/dynlib_posix.cpp b/src/core/dynlib_posix.cpp
+--- a/src/core/dynlib_posix.cpp
++++ b/src/core/dynlib_posix.cpp
+@@ -53,6 +53,18 @@
+   }
+ #endif
+   handle_ = dlopen(path.c_str(), flags);
++#if REX_PLATFORM_ANDROID
++  // dlopen() takes the file name verbatim -- unlike the Windows loader it
++  // does not append an extension, and it never prepends "lib". The runtime
++  // asks for a recompiled companion by its codegen lib_name
++  // ("game_fifadllzf_xex"), while the packaged file is
++  // libgame_fifadllzf_xex.so, so retry with the decoration an Android .so
++  // always carries. Only for bare names: a path with a slash is explicit.
++  if (!handle_ && path.filename().find('/') == std::string::npos) {
++    std::string decorated = "lib" + path.string() + ".so";
++    handle_ = dlopen(decorated.c_str(), flags);
++  }
++#endif
+   return handle_ != nullptr;
+ }
+ 
