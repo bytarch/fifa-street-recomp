@@ -1,26 +1,47 @@
 diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
-index 697399c..6151d98 100644
 --- a/src/system/kernel_state.cpp
 +++ b/src/system/kernel_state.cpp
-@@ -915,9 +915,21 @@ std::optional<KernelState::RecompiledModuleInfo> KernelState::FindRecompiledModu
+@@ -936,9 +936,43 @@
      std::string_view guest_path) {
    auto global_lock = global_critical_region_.Acquire();
    auto normalized = NormalizeGuestPath(guest_path);
 +  // The guest names a companion by its BARE file name (FIFA Street opens
-+  // "fifadllzf.xex.dll" itself, then XexLoadImages it), while LoadUserModule
-+  // resolves the load against the executable's base path first and arrives
-+  // here with "game:\fifadllzf.xex.dll". The registry is written from the
-+  // manifest's guest_path, which is what the manifest had, so compare the file
-+  // name as well: a mismatch leaves the recompiled module unwired and every
-+  // call into the companion image fatals with "function not in function
-+  // table". The registry holds a handful of entries, so the extra pass is free.
-+  auto want_name = rex::string::utf8_find_name_from_guest_path(normalized);
++  // "fifadllzf.xex.dll", then XexLoadImages it), while LoadUserModule resolves
++  // the load against the executable's base path and arrives here with
++  // "\Device\Harddisk0\Partition1\fifadllzf.xex.dll". The registry stores
++  // whatever NormalizeGuestPath made of the manifest's guest_path, and the two
++  // device prefixes do not have to agree -- so match on the trailing file
++  // name as well, comparing it by hand: the SDK's path helpers normalise
++  // separators and devices in ways that need not preserve the name verbatim.
++  std::string_view Name(std::string_view p) {
++    const auto pos = p.find_last_of("/\\:");
++    return pos == std::string_view::npos ? p : p.substr(pos + 1);
++  }
++  auto want = Name(normalized);
++  auto SameName = [](std::string_view a, std::string_view b) {
++    if (a.size() != b.size()) return false;
++    for (size_t i = 0; i < a.size(); ++i) {
++      char ca = a[i], cb = b[i];
++      if (ca >= 'A' && ca <= 'Z') ca = static_cast<char>(ca - 'A' + 'a');
++      if (cb >= 'A' && cb <= 'Z') cb = static_cast<char>(cb - 'A' + 'a');
++      if (ca != cb) return false;
++    }
++    return true;
++  };
    for (const auto& info : recompiled_modules_) {
      if (info.guest_path == normalized)
        return info;
-+    if (!want_name.empty() &&
-+        rex::string::utf8_find_name_from_guest_path(info.guest_path) == want_name)
++    if (!want.empty() && SameName(info.guest_path, want)) {
++      REXSYS_WARN("FindRecompiledModule: matched '{}' against registry entry '{}' by file name",
++                  normalized, info.guest_path);
 +      return info;
++    }
++  }
++  REXSYS_ERROR("FindRecompiledModule: '{}' matches none of {} registry entry/entries", normalized,
++               recompiled_modules_.size());
++  for (const auto& info : recompiled_modules_) {
++    REXSYS_ERROR("  registry: pe='{}' guest='{}' lib='{}'", info.pe_name, info.guest_path,
++                 info.shared_lib_name);
    }
    return std::nullopt;
  }
