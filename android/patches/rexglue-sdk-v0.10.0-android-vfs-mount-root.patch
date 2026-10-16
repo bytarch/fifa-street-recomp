@@ -11,7 +11,7 @@ diff --git a/src/filesystem/virtual_file_system.cpp b/src/filesystem/virtual_fil
 +  // Device::ResolvePath documents the EMPTY path as the root alias, so hand it
 +  // that instead. FIFA Street creates its whole config set this way --
 +  // VirtualFileSystem::CreatePath resolves the raw first component ("d:\")
-+  # before symlinks -- and every create failed STATUS_NO_SUCH_FILE.
++  // before symlinks -- and every create failed STATUS_NO_SUCH_FILE.
 +  {
 +    auto rel = relative_path;
 +    while (!rel.empty() && (rel.front() == '\\' || rel.front() == '/')) {
