@@ -18,7 +18,7 @@ else
   echo "[android_sdk] cloning $SDK_REPO@$SDK_TAG"
   git clone --depth 1 --branch "$SDK_TAG" "$SDK_REPO" "$SDK_DIR"
   git -C "$SDK_DIR" submodule update --init --depth 1
-  for p in rexglue-sdk-v0.10.0.patch rexglue-sdk-v0.10.0-android.patch rexglue-sdk-v0.10.0-android-perf.patch rexglue-sdk-v0.10.0-tolerant-dispatch.patch rexglue-sdk-v0.10.0-android-custom-vulkan.patch rexglue-sdk-v0.10.0-fps-cap.patch rexglue-sdk-v0.10.0-android-quiet.patch rexglue-sdk-v0.10.0-signal-chain.patch rexglue-sdk-v0.10.0-join-once.patch rexglue-sdk-v0.10.0-android-mali-vertex-stores.patch rexglue-sdk-v0.10.0-android-mali-fill-mode.patch rexglue-sdk-v0.10.0-android-entry-table-reloc.patch rexglue-sdk-v0.10.0-android-usbcam-imports.patch rexglue-sdk-v0.10.0-android-module-guestpath.patch rexglue-sdk-v0.10.0-android-userdir-achievements.patch; do
+  for p in rexglue-sdk-v0.10.0.patch rexglue-sdk-v0.10.0-android.patch rexglue-sdk-v0.10.0-android-perf.patch rexglue-sdk-v0.10.0-tolerant-dispatch.patch rexglue-sdk-v0.10.0-android-custom-vulkan.patch rexglue-sdk-v0.10.0-fps-cap.patch rexglue-sdk-v0.10.0-android-quiet.patch rexglue-sdk-v0.10.0-signal-chain.patch rexglue-sdk-v0.10.0-join-once.patch rexglue-sdk-v0.10.0-android-mali-vertex-stores.patch rexglue-sdk-v0.10.0-android-mali-fill-mode.patch rexglue-sdk-v0.10.0-android-entry-table-reloc.patch rexglue-sdk-v0.10.0-android-usbcam-imports.patch rexglue-sdk-v0.10.0-android-module-guestpath.patch rexglue-sdk-v0.10.0-android-userdir-achievements.patch rexglue-sdk-v0.10.0-android-vfs-relative-paths.patch; do
     echo "[android_sdk] applying $p"
     git -C "$SDK_DIR" apply "$PATCHES/$p"
   done
