@@ -126,6 +126,13 @@ foreach(_rex_mod_name ${_rex_module_dirs})
     if(_rex_mod_name STREQUAL "default")
         continue()
     endif()
+    # rexauto's companion SCAN manifest emits into generated/<key>_scan (the
+    # image dump for jump-table recovery / IDA). It is analysis scratch, not a
+    # build module: the desktop dll_targets.cmake never lists it, and its pch is
+    # named after the module key, not the project. Skip it.
+    if(_rex_mod_name MATCHES "_scan$")
+        continue()
+    endif()
     set(_rex_mod_gen "${REX_GEN_DIR}/../${_rex_mod_name}")
     if(NOT EXISTS "${_rex_mod_gen}/sources.cmake")
         continue()
@@ -170,7 +177,11 @@ foreach(_rex_mod_name ${_rex_module_dirs})
     add_library(${_rex_mod_target} SHARED ${_rex_mod_abs_sources})
     target_include_directories(${_rex_mod_target} PRIVATE
         "${REX_PORT_DIR}" "${REX_PORT_DIR}/src" "${_rex_mod_gen}")
-    target_precompile_headers(${_rex_mod_target} PRIVATE "${_rex_mod_gen}/game_pch.h")
+    file(GLOB _rex_mod_pch "${_rex_mod_gen}/*_pch.h")
+    if(_rex_mod_pch)
+        list(GET _rex_mod_pch 0 _rex_mod_pch_first)
+        target_precompile_headers(${_rex_mod_target} PRIVATE "${_rex_mod_pch_first}")
+    endif()
     target_compile_options(${_rex_mod_target} PRIVATE
         -g0 -O3
         -fno-rtti
