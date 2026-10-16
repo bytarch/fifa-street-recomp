@@ -319,6 +319,12 @@ jobs:
           test -f autoports/${{ inputs.name }}/port/src/main.cpp
           sed -n '1,8p' autoports/${{ inputs.name }}/port/generated/default/sources.cmake
 
+      - name: Repair misclassified local conditional branches
+        run: |
+          python3 -B android/tools/test_fix_local_branches.py
+          python3 -B android/tools/fix_local_branches.py autoports/${{ inputs.name }}/port
+          python3 -B android/tools/fix_local_branches.py autoports/${{ inputs.name }}/port --check
+
       - name: Host toolchain
         run: |
           sudo apt-get update
