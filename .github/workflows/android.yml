@@ -130,7 +130,8 @@ jobs:
         shell: pwsh
         run: |
           $args = @("${{ steps.fetch.outputs.container }}", "--name", "${{ inputs.name }}",
-                    "--no-jumptables", "--heal-iters", "${{ inputs.heal_iters }}", "--publish-gabarito")
+                    "--no-jumptables", "--heal-iters", "${{ inputs.heal_iters }}", "--publish-gabarito",
+                    "--no-module-dlls")
           if ("${{ inputs.runheal }}" -ne "true") { $args += @("--until", "build") }
           New-Item -ItemType Directory -Force "$env:REXAUTO_WORK\${{ inputs.name }}" | Out-Null
           # Seed repo-authored port data (companion [[modules]] declarations,

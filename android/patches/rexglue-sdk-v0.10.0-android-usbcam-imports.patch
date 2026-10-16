@@ -1,0 +1,18 @@
+diff --git a/src/kernel/CMakeLists.txt b/src/kernel/CMakeLists.txt
+index 984b97d..b06a877 100644
+--- a/src/kernel/CMakeLists.txt
++++ b/src/kernel/CMakeLists.txt
+@@ -50,7 +50,12 @@ set(REXKERNEL_SOURCES
+     xboxkrnl/xboxkrnl_rtl.cpp
+     xboxkrnl/xboxkrnl_strings.cpp
+     xboxkrnl/xboxkrnl_threading.cpp
+-    # xboxkrnl/xboxkrnl_usbcam.cpp  # TODO: lol eventually.
++    # rexauto: compiled so a companion module that imports the Xbox webcam API
++    # links. The engine XEX behind FIFA Street's default.xex imports
++    # XUsbcamGetState/XUsbcamSetConfig; a shared library referencing
++    # __imp__XUsbcam* fails to link (desktop) or at dlopen (Android) without
++    # these exports.
++    xboxkrnl/xboxkrnl_usbcam.cpp
+     xboxkrnl/xboxkrnl_video.cpp
+     xboxkrnl/xboxkrnl_xconfig.cpp
+     xboxkrnl/xboxkrnl_audio.cpp

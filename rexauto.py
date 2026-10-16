@@ -1292,6 +1292,8 @@ def do_codegen(ctx, env=None, level="error"):
             _inject_pch_into_cmake(ctx)
             _inject_debug_diet_into_cmake(ctx)
             _inject_android_table_reloc_pch(ctx)
+            if getattr(ctx.args, "no_module_dlls", False):
+                _suppress_module_dlls(ctx)
             return out
         targets = _heal.unresolved_calls_from_text(out)
         if not targets and (r.returncode in CXX_EXCEPTION_RC or "bad allocation" in out):
@@ -2092,6 +2094,36 @@ def _inject_android_table_reloc_pch(ctx):
     open(pch, "w", encoding="utf-8", newline="\n").write(txt)
     ctx.log("  wired Android entry-table relocation into %s"
             % os.path.basename(pch))
+
+
+def _suppress_module_dlls(ctx):
+    """--no-module-dlls: neutralise the codegen-emitted dll_targets.cmake so the
+    DESKTOP build declares no companion shared libraries.
+
+    The companion's generated register.cpp takes the address of every guest
+    import thunk (registrar->SetFunction(addr, __imp__XUsbcamGetState)), so the
+    module DLL only links where the SDK's kernel implements that import -- and
+    the desktop runtime is a PREBUILT rexruntime.dll (rexauto cannot patch it).
+    FIFA Street's engine module imports XUsbcamGetState/XUsbcamSetConfig, whose
+    kernel TU the SDK leaves out of the build ("# TODO: lol eventually"), so the
+    desktop module DLL dies at link and takes the whole port build with it. The
+    desktop runtime could not load the companion anyway (its prebuilt entry
+    function table sits where this module's XEX image loads), so CI validates the
+    desktop port entrypoint-only and the Android job builds the module from the
+    same generated sources against the patched SDK (usbcam TU enabled). Rewritten
+    after every codegen (codegen regenerates the file), idempotent, marker-guarded.
+    """
+    p = os.path.join(ctx.gen, "dll_targets.cmake")
+    if not os.path.exists(p):
+        return
+    txt = _heal._read_text(p)
+    if "rexauto --no-module-dlls" in txt:
+        return
+    open(p, "w", encoding="utf-8", newline="\n").write(
+        "# rexauto --no-module-dlls: companion shared libraries are NOT built in\n"
+        "# this (desktop) build -- see rexauto.py _suppress_module_dlls. The\n"
+        "# Android pipeline compiles them against the patched SDK instead.\n")
+    ctx.log("  module DLL targets suppressed for this build (--no-module-dlls)")
 
 
 def _cpp_str(s):
@@ -4793,6 +4825,12 @@ def main():
     ap.add_argument("--until", dest="until_stage", choices=STAGES,
                     help="stop after this stage (e.g. --until build skips runheal)")
     ap.add_argument("--no-jumptables", action="store_true")
+    ap.add_argument("--no-module-dlls", action="store_true",
+                    help="do not build companion (XEX module) shared libraries in "
+                         "this desktop build; the Android pipeline compiles them "
+                         "from the same generated sources against a patched SDK, "
+                         "while the desktop runtime is a prebuilt DLL that cannot "
+                         "load a companion anyway")
     ap.add_argument("--no-title-update", action="store_true",
                     help="do not auto-detect/apply an Xbox 360 title update (.xexp); "
                          "build the base game version")
