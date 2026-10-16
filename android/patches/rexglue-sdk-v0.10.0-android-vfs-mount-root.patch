@@ -1,0 +1,26 @@
+diff --git a/src/filesystem/virtual_file_system.cpp b/src/filesystem/virtual_file_system.cpp
+--- a/src/filesystem/virtual_file_system.cpp
++++ b/src/filesystem/virtual_file_system.cpp
+@@ -148,6 +148,22 @@
+ 
+   const auto& device = *it;
+   auto relative_path = normalized_path.substr(device->mount_path().size());
++  // A mount root reached through a symlink ("d:\" resolves to
++  // "\Device\Harddisk0\Partition1\") leaves a separator-only relative path,
++  // which the device then looks up as a child literally named "\" and misses.
++  // Device::ResolvePath documents the EMPTY path as the root alias, so hand it
++  // that instead. FIFA Street creates its whole config set this way --
++  // VirtualFileSystem::CreatePath resolves the raw first component ("d:\")
++  # before symlinks -- and every create failed STATUS_NO_SUCH_FILE.
++  {
++    auto rel = relative_path;
++    while (!rel.empty() && (rel.front() == '\\' || rel.front() == '/')) {
++      rel.erase(rel.begin());
++    }
++    if (rel.empty()) {
++      relative_path.clear();
++    }
++  }
+   auto* entry = device->ResolvePath(relative_path);
+ 
+   if (entry) {
