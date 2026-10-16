@@ -1,26 +1,104 @@
 diff --git a/include/rex/filesystem/vfs.h b/include/rex/filesystem/vfs.h
 --- a/include/rex/filesystem/vfs.h
 +++ b/include/rex/filesystem/vfs.h
-@@ -43,7 +43,6 @@
-   // those against the launch directory. Devices only match rooted paths, so
-   // the launch directory is registered here and consulted for relative names.
-   void SetDefaultBasePath(std::string path);
--  std::string DefaultBasePath() const;
+@@ -38,6 +38,12 @@
+   bool UnregisterSymbolicLink(const std::string_view path);
+   bool FindSymbolicLink(const std::string_view path, std::string& target);
  
++  // Xbox titles open files by BARE name all the time (FIFA Street probes
++  // "fifadllzf.xex.dll" before XexLoadImage'ing it); the console resolves
++  // those against the launch directory. Devices only match rooted paths, so
++  // the launch directory is registered here and consulted for relative names.
++  void SetDefaultBasePath(std::string path);
++
    Entry* ResolvePath(const std::string_view path);
  
+   Entry* CreatePath(const std::string_view path, uint32_t attributes);
+@@ -52,6 +58,10 @@
+   rex::thread::global_critical_region global_critical_region_;
+   std::vector<std::unique_ptr<Device>> devices_;
+   std::unordered_map<std::string, std::string> symlinks_;
++  std::string default_base_path_;
++
++  // Rooted path unchanged; a bare name gets the launch directory prepended.
++  std::string ApplyDefaultBase(std::string_view path) const;
+ 
+   bool ResolveSymbolicLink(const std::string_view path, std::string& result);
+ };
 diff --git a/src/filesystem/virtual_file_system.cpp b/src/filesystem/virtual_file_system.cpp
 --- a/src/filesystem/virtual_file_system.cpp
 +++ b/src/filesystem/virtual_file_system.cpp
-@@ -105,11 +105,6 @@
- void VirtualFileSystem::SetDefaultBasePath(std::string path) {
-   auto global_lock = global_critical_region_.Acquire();
-   default_base_path_ = std::move(path);
--}
--
--std::string VirtualFileSystem::DefaultBasePath() const {
--  auto global_lock = global_critical_region_.Acquire();
--  return default_base_path_;
+@@ -102,11 +102,28 @@
+   return was_resolved;
  }
  
- std::string VirtualFileSystem::ApplyDefaultBase(std::string_view path) const {
++void VirtualFileSystem::SetDefaultBasePath(std::string path) {
++  auto global_lock = global_critical_region_.Acquire();
++  default_base_path_ = std::move(path);
++}
++
++std::string VirtualFileSystem::ApplyDefaultBase(std::string_view path) const {
++  auto normalized = std::string(rex::string::utf8_canonicalize_guest_path(path));
++  if (default_base_path_.empty() || normalized.empty()) {
++    return normalized;
++  }
++  if (!rex::string::utf8_find_base_guest_path(normalized).empty()) {
++    return normalized;  // already rooted at a device
++  }
++  return std::string(rex::string::utf8_join_guest_paths(default_base_path_, normalized));
++}
++
+ Entry* VirtualFileSystem::ResolvePath(const std::string_view path) {
+   auto global_lock = global_critical_region_.Acquire();
+ 
+-  // Resolve relative paths
+-  auto normalized_path(rex::string::utf8_canonicalize_guest_path(path));
++  // Resolve relative paths (bare names resolve against the launch directory,
++  // like the console's current directory).
++  auto normalized_path(ApplyDefaultBase(path));
+ 
+   // Resolve symlinks.
+   std::string resolved_path;
+@@ -215,7 +232,8 @@
+   Entry* parent_entry = nullptr;
+   Entry* entry = nullptr;
+ 
+-  auto base_path = rex::string::utf8_find_base_guest_path(path);
++  auto resolved = ApplyDefaultBase(path);
++  auto base_path = rex::string::utf8_find_base_guest_path(resolved);
+   if (!base_path.empty()) {
+     parent_entry = !root_entry ? ResolvePath(base_path) : root_entry->ResolvePath(base_path);
+     if (!parent_entry) {
+@@ -223,10 +241,10 @@
+       return X_STATUS_NO_SUCH_FILE;
+     }
+ 
+-    auto file_name = rex::string::utf8_find_name_from_guest_path(path);
++    auto file_name = rex::string::utf8_find_name_from_guest_path(resolved);
+     entry = parent_entry->GetChild(file_name);
+   } else {
+-    entry = !root_entry ? ResolvePath(path) : root_entry->GetChild(path);
++    entry = !root_entry ? ResolvePath(resolved) : root_entry->GetChild(resolved);
+   }
+ 
+   if (entry) {
+diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
+--- a/src/system/kernel_state.cpp
++++ b/src/system/kernel_state.cpp
+@@ -592,6 +592,16 @@
+   executable_module_ = std::move(module);
+   if (!executable_module_) {
+     return;
++  }
++
++  // Bare guest file names resolve against the launch directory (Xbox current
++  // directory); without this the VFS rejects "fifadllzf.xex.dll" with
++  // "[no device]" and the title concludes its engine module is missing.
++  {
++    auto base_dir = rex::string::utf8_find_base_guest_path(executable_module_->path());
++    if (!base_dir.empty()) {
++      file_system()->SetDefaultBasePath(std::string(base_dir));
++    }
+   }
+ 
+   // Update title process fields from the executable module.
