@@ -1,0 +1,45 @@
+diff --git a/src/system/achievement_manager.cpp b/src/system/achievement_manager.cpp
+index f4e0efd..c6a9678 100644
+--- a/src/system/achievement_manager.cpp
++++ b/src/system/achievement_manager.cpp
+@@ -222,7 +222,17 @@ void AchievementManager::LoadUnlockState() {
+     std::lock_guard lock(mutex_);
+     save_path = unlock_save_path_;
+   }
+-  if (save_path.empty() || !std::filesystem::exists(save_path)) {
++  // exists() without an error_code THROWS on anything but a clean
++  // not-found (EACCES on an unwritable/unreachable save dir, ENOTDIR, ...),
++  // and this probe sits outside the try below, so a bad path would abort the
++  // process at boot instead of "no unlocks yet".
++  bool have_save = false;
++  try {
++    have_save = !save_path.empty() && std::filesystem::exists(save_path);
++  } catch (const std::exception& error) {
++    REXSYS_WARN("Cannot probe unlock save {}: {}", save_path.string(), error.what());
++  }
++  if (!have_save) {
+     return;
+   }
+ 
+diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
+index b94fe9e..463160f 100644
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -117,7 +117,17 @@ bool ReXApp::SetupEnvironment() {
+   if (!user_data_cvar.empty()) {
+     user_dir = user_data_cvar;
+   } else {
++#ifdef __ANDROID__
++    // Android has no XDG/HOME the runtime can use: HOME is "/" (or unset), so
++    // GetUserFolder() lands on /.local/share/game, which the app cannot even
++    // traverse -- std::filesystem::status on the achievement save path throws
++    // EACCES and the throw escapes LoadUnlockState, killing the game at boot.
++    // The app's own external files dir (<pkg>/files) is writable and is the
++    // parent of game_dir, so saves go next to the game data.
++    user_dir = game_dir.parent_path();
++#else
+     user_dir = rex::filesystem::GetUserFolder() / GetName();
++#endif
+   }
+ 
+   // Update data: cvar override, or empty (opt-in)
