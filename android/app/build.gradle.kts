@@ -5,9 +5,9 @@ plugins {
 // Per-title identity, handed over by the workflow (or a local build):
 //   -PrexName=scottpilgrim -PrexTitle="Scott Pilgrim vs. The World" -PrexTitleId=58410A2C
 //   -PrexPortDir=/abs/path/autoports/<name>/port  -PrexSdkDir=/abs/path/rexglue-sdk
-val rexName: String = (project.findProperty("rexName") as String?) ?: "game"
-val rexTitle: String = (project.findProperty("rexTitle") as String?) ?: rexName
-val rexTitleId: String = (project.findProperty("rexTitleId") as String?) ?: "00000000"
+val rexName: String = (project.findProperty("rexName") as String?)?.takeIf { it.isNotBlank() } ?: "game"
+val rexTitle: String = (project.findProperty("rexTitle") as String?)?.takeIf { it.isNotBlank() } ?: rexName
+val rexTitleId: String = (project.findProperty("rexTitleId") as String?)?.takeIf { it.isNotBlank() } ?: "00000000"
 val rexPortDir: String = (project.findProperty("rexPortDir") as String?)
     ?: "${rootProject.projectDir.parentFile}/autoports/$rexName/port"
 val rexSdkDir: String = (project.findProperty("rexSdkDir") as String?)

@@ -46,6 +46,11 @@ on:
         required: false
         default: "4"
         type: string
+      reuse_run:
+        description: "Skip recompile: build the APK from the port-src artifact of this run id (Android-only changes: launcher, SDK patches, CMake). Only set it when the last recompile job succeeded -- the artifact comes from THAT run."
+        required: false
+        default: ""
+        type: string
 
 run-name: "Android: ${{ inputs.name }}"
 
@@ -57,9 +62,76 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ------------------------------------------------------------------- gate
+  # Codegen (the windows job) is expensive and its OUTPUT -- port-src -- is
+  # what the APK job consumes. Everything that shapes that output is hashed
+  # here: the repository minus the Android-side tree (launcher, SDK patches,
+  # CMake -- those only change the APK job), plus the inputs that reach the
+  # generated code (the game container, the run-heal knobs that write cures
+  # into port-src). Equal to the key the last successful recompile recorded ->
+  # reuse that run's artifact; otherwise codegen runs. A failed/expired
+  # artifact also falls back to a full run, so the gate can only ever skip
+  # work that provably already happened.
+  gate:
+    name: "codegen gate"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      run_codegen: ${{ steps.decide.outputs.run_codegen }}
+      reuse_run: ${{ steps.decide.outputs.reuse_run }}
+      codegen_key: ${{ steps.decide.outputs.codegen_key }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decide whether codegen must run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: android.yml
+        run: |
+          set -euo pipefail
+          name='${{ inputs.name }}'
+          key=$({ git ls-files | grep -v -e '^android/' -e '^server/' -e '\.md$'; \
+                  echo "url=${{ inputs.url }}"; \
+                  echo "name=$name"; \
+                  echo "runheal=${{ inputs.runheal }}"; \
+                  echo "heal_iters=${{ inputs.heal_iters }}"; } | sort | sha256sum | cut -d' ' -f1)
+          echo "codegen key: $key"
+          echo "codegen_key=$key" >> "$GITHUB_OUTPUT"
+          forced='${{ inputs.reuse_run }}'
+          if [ -n "$forced" ]; then
+            echo "reuse_run explicitly set -> reusing run $forced"
+            echo "run_codegen=false" >> "$GITHUB_OUTPUT"
+            echo "reuse_run=$forced" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          newest_with_codegen=""
+          for id in $(gh api "repos/$REPO/actions/workflows/$WORKFLOW/runs?per_page=30" \
+                        --jq "[.workflow_runs[] | select(.display_title == \"Android: $name\")][].id"); do
+            job=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=20" \
+                    --jq '[.jobs[] | select(.name == "codegen + static heal (windows)") | .conclusion][0] // ""')
+            if [ "$job" = "success" ]; then newest_with_codegen=$id; break; fi
+          done
+          if [ -z "$newest_with_codegen" ]; then
+            echo "no previous successful codegen -> run it"
+            echo "run_codegen=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh run download "$newest_with_codegen" -n "codegen-key-$name" -D "$RUNNER_TEMP/key" >/dev/null 2>&1 \
+             && have=$(tr -d '\r\n ' < "$RUNNER_TEMP/key/key.txt") && [ "$have" = "$key" ]; then
+            echo "codegen inputs unchanged since $newest_with_codegen -> reusing its port-src"
+            echo "run_codegen=false" >> "$GITHUB_OUTPUT"
+            echo "reuse_run=$newest_with_codegen" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "codegen inputs changed (or run $newest_with_codegen recorded no usable key) -> run codegen"
+          echo "run_codegen=true" >> "$GITHUB_OUTPUT"
+
   # ------------------------------------------------------------------ codegen
   recompile:
     name: "codegen + static heal (windows)"
+    needs: gate
+    if: needs.gate.outputs.run_codegen == 'true'
     runs-on: windows-latest
     timeout-minutes: 350
     outputs:
@@ -194,19 +266,47 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Record codegen key for the next gate
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "${{ runner.temp }}\key" | Out-Null
+          "${{ needs.gate.outputs.codegen_key }}" |
+            Out-File -FilePath "${{ runner.temp }}\key\key.txt" -Encoding ascii -NoNewline
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codegen-key-${{ inputs.name }}
+          path: ${{ runner.temp }}/key/key.txt
+          if-no-files-found: ignore
+          retention-days: 90
+
   # ---------------------------------------------------------------------- apk
   apk:
     name: "APK (arm64-v8a)"
-    needs: recompile
+    needs: [gate, recompile]
+    # recompile is skipped when the gate reused a previous run's port-src; a
+    # skipped need would normally skip this job too.
+    if: always() && (needs.recompile.result == 'success' || (needs.recompile.result == 'skipped' && needs.gate.outputs.reuse_run != ''))
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
+        if: needs.gate.outputs.reuse_run == ''
         with:
           name: port-src-${{ inputs.name }}
           path: ${{ runner.temp }}/in
+
+      - uses: actions/download-artifact@v4
+        if: needs.gate.outputs.reuse_run != ''
+        with:
+          name: port-src-${{ inputs.name }}
+          path: ${{ runner.temp }}/in
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.gate.outputs.reuse_run }}
 
       - name: Unpack port
         run: |
