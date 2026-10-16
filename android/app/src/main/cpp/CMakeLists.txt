@@ -96,13 +96,31 @@ target_link_libraries(recomp PUBLIC rex::runtime rexui)
 # --- recompiled companion modules (multi-XEX ports) ---------------------------
 # Codegen mirrors every manifest [[modules]] entry into
 # generated/default/module_registry.cpp (RegisterRecompiledModules) and emits
-# one generated/<module>/ dir per companion. The runtime loads each companion
-# when the guest XexLoadImage's it: DynamicLibrary(shared_lib_name) where
-# shared_lib_name = "<project>_<target>" -- Android dlopen resolves a bare name
-# as lib<name>.so in the app's native lib dir, so the CMake target name IS the
-# packaged .so name. AGP packages every shared library the CMake project
-# builds; one SHARED target per generated/<module> dir, default lib visibility
-# so ReXModule_Register / ReXModule_GetImageInfo stay exported.
+# one generated/<module>/ dir per companion (its codegen runs with the ENTRY
+# project name, so those dirs carry game_*.h/cpp too). The runtime loads each
+# companion when the guest XexLoadImage's it:
+#   DynamicLibrary(shared_lib_name), shared_lib_name = "<project>_<target>",
+#   target = file_path stem with the LAST extension dropped and dots as
+#   underscores -- fifadllzf.xex.dll -> game_fifadllzf_xex.
+# Android dlopen resolves a bare name as lib<name>.so in the app's native lib
+# dir, so the CMake target name (hence the packaged .so name) MUST be exactly
+# that lib_name. The names are taken from the codegen-emitted dll_targets.cmake
+# (authoritative); AGP packages every shared library the CMake project builds.
+# Exports survive CXX_VISIBILITY_PRESET hidden: ReXModule_Register /
+# ReXModule_GetImageInfo carry explicit visibility("default").
+set(_rex_dll_targets "")
+if(EXISTS "${REX_GEN_DIR}/dll_targets.cmake")
+    file(STRINGS "${REX_GEN_DIR}/dll_targets.cmake" _rex_dt_lines)
+    set(_rex_dt_dir "")
+    foreach(_rex_dt_line IN LISTS _rex_dt_lines)
+        if(_rex_dt_line MATCHES "include\\(([A-Za-z0-9_/]+)/sources\\.cmake\\)")
+            set(_rex_dt_dir "${CMAKE_MATCH_1}")
+        elseif(_rex_dt_dir AND _rex_dt_line MATCHES "add_library\\(([A-Za-z0-9_]+) SHARED")
+            list(APPEND _rex_dll_targets "${_rex_dt_dir}=${CMAKE_MATCH_1}")
+            set(_rex_dt_dir "")
+        endif()
+    endforeach()
+endif()
 file(GLOB _rex_module_dirs RELATIVE "${REX_GEN_DIR}/.." "${REX_GEN_DIR}/../*")
 foreach(_rex_mod_name ${_rex_module_dirs})
     if(_rex_mod_name STREQUAL "default")
@@ -111,6 +129,20 @@ foreach(_rex_mod_name ${_rex_module_dirs})
     set(_rex_mod_gen "${REX_GEN_DIR}/../${_rex_mod_name}")
     if(NOT EXISTS "${_rex_mod_gen}/sources.cmake")
         continue()
+    endif()
+    set(_rex_mod_target "")
+    foreach(_rex_dt ${_rex_dll_targets})
+        string(REGEX REPLACE "=.*$" "" _rex_dt_dir "${_rex_dt}")
+        string(REGEX REPLACE "^.*=" "" _rex_dt_lib "${_rex_dt}")
+        if(_rex_dt_dir STREQUAL "generated/${_rex_mod_name}")
+            set(_rex_mod_target "${_rex_dt_lib}")
+        endif()
+    endforeach()
+    if(NOT _rex_mod_target)
+        set(_rex_mod_target "${REX_APP_NAME}_${_rex_mod_name}")
+        message(WARNING "no dll_targets.cmake entry for generated/${_rex_mod_name}; "
+                        "falling back to target ${_rex_mod_target} (runtime dlopen "
+                        "looks for the codegen's shared_lib_name)")
     endif()
     set(_REXGLUE_RESTORE_GENERATED_SOURCES FALSE)
     if(DEFINED GENERATED_SOURCES)
@@ -135,17 +167,19 @@ foreach(_rex_mod_name ${_rex_module_dirs})
         endif()
     endforeach()
     unset(_rex_mod_sources)
-    set(_rex_mod_target "${REX_APP_NAME}_${_rex_mod_name}")
     add_library(${_rex_mod_target} SHARED ${_rex_mod_abs_sources})
     target_include_directories(${_rex_mod_target} PRIVATE
         "${REX_PORT_DIR}" "${REX_PORT_DIR}/src" "${_rex_mod_gen}")
+    target_precompile_headers(${_rex_mod_target} PRIVATE "${_rex_mod_gen}/game_pch.h")
     target_compile_options(${_rex_mod_target} PRIVATE
         -g0 -O3
         -fno-rtti
         -fno-math-errno -fno-trapping-math
         -Wno-unused-variable -Wno-unused-label -Wno-unused-but-set-variable
         -Wno-unused-value -Wno-parentheses-equality)
-    set_target_properties(${_rex_mod_target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
+    set_target_properties(${_rex_mod_target} PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION OFF
+        CXX_VISIBILITY_PRESET hidden)
     target_link_libraries(${_rex_mod_target} PRIVATE rex::runtime)
     list(APPEND _rex_module_targets ${_rex_mod_target})
     message(STATUS "rexauto module target: ${_rex_mod_target} (${_rex_mod_gen})")

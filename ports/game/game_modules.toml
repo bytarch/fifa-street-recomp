@@ -1,0 +1,26 @@
+# FIFA Street (Title ID 4541097B) -- companion XEX modules for the rexauto port.
+#
+# default.xex is a thin launcher; the engine lives in fifadllzf.xex.dll
+# (27,807,744 bytes, fixed load image 0x82300000-0x83EC0000) and the guest
+# XexLoadImage's it at runtime. Declared here so the pipeline recompiles it
+# into its own shared library (registered via module_registry.cpp, bound by the
+# runtime at load time) instead of fataling on calls into it:
+#   Execute(82737CE0): function not in function table
+#   Call to invalid or unregistered function at guest address 0x82612A48
+#
+# The CI workflow copies this file (all ports/<name>/*.toml) into
+# autoports/<name>/port/ before rexauto runs; rexauto reads it via
+# extra_modules() in stage_build. Field semantics are extra_modules()'s:
+#   key   - generated/<key>/ + <key>_functions.toml (heal writes here)
+#   name  - manifest project name for the module scan dump
+#   xex   - path relative to the game root (extracted ISO root here).
+#
+# Also note the entry function table's natural slot [0x821C0000, 0x82412E90)
+# collides with this module's image; the Android SDK patch
+# android/patches/rexglue-sdk-v0.10.0-android-entry-table-reloc.patch relocates
+# the entry table to 0x8C000000 under #ifdef __ANDROID__ and rexauto rewrites
+# REX_LOOKUP_FUNC in the entry PCH to match (desktop stays byte-identical).
+[[modules]]
+key = "fifadllzf"
+name = "fifadllzf"
+xex = "fifadllzf.xex.dll"

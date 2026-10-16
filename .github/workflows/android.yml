@@ -133,6 +133,16 @@ jobs:
                     "--no-jumptables", "--heal-iters", "${{ inputs.heal_iters }}", "--publish-gabarito")
           if ("${{ inputs.runheal }}" -ne "true") { $args += @("--until", "build") }
           New-Item -ItemType Directory -Force "$env:REXAUTO_WORK\${{ inputs.name }}" | Out-Null
+          # Seed repo-authored port data (companion [[modules]] declarations,
+          # cures) into the work port before the pipeline runs. stage_init
+          # preserves an existing port dir and only adds the manifest.
+          $seed = "ports/${{ inputs.name }}"
+          if (Test-Path $seed) {
+            $portDir = "$env:REXAUTO_WORK\${{ inputs.name }}\port"
+            New-Item -ItemType Directory -Force $portDir | Out-Null
+            Get-ChildItem $seed -File -Filter *.toml | Copy-Item -Destination $portDir -Force
+            Get-ChildItem $portDir -Filter *.toml | ForEach-Object { Write-Host "seeded: $($_.Name)" }
+          }
           python rexauto.py @args 2>&1 | Tee-Object -FilePath "$env:REXAUTO_WORK\${{ inputs.name }}\_pipeline.log"
           exit $LASTEXITCODE
 
