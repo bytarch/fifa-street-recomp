@@ -91,7 +91,13 @@ jobs:
         run: |
           set -euo pipefail
           name='${{ inputs.name }}'
-          key=$({ git ls-files | grep -v -e '^android/' -e '^server/' -e '\.md$' -e '^tools/android_sdk\.sh$'; \
+          # `git ls-files -s` prints "<mode> <blob-sha> <stage>\t<path>", so the
+          # key follows file CONTENT. Plain `git ls-files` prints paths only,
+          # which made the key blind to every seed/cure edit: those files keep
+          # their names, so the gate reused a port-src generated from the OLD
+          # cures and the new ones silently never reached the build.
+          key=$({ git ls-files -s | awk '{ $1=""; $3=""; sub(/^ +/, ""); print }' \
+                   | grep -v -e '^android/' -e '^server/' -e '\.md$' -e '^tools/android_sdk\.sh$'; \
                   echo "url=${{ inputs.url }}"; \
                   echo "name=$name"; \
                   echo "runheal=${{ inputs.runheal }}"; \
