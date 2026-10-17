@@ -2,6 +2,12 @@
 # `end` = extend a function the recompiler split mid-flow;
 # `parent` = a chunk (address-taken sub-entry) of a parent function;
 # `{}`  = a function discovered at runtime by the heal loop.
+#
+# fifadllzf's virtual-function thunks ('addi r3,r3,-4; b <impl>') are compiled
+# only sporadically by static discovery -- the title calls the skipped ones
+# through their vtable slots and hits the runtime's invalid-function trap.
+# Every entry below is such a thunk (or an earlier runtime cure); each one's
+# branch target is already compiled, so registering the entry is sufficient.
 
 [functions]
 "0x82611F28" = {}
@@ -13,13 +19,52 @@
 "0x82783960" = {}
 "0x82797AE8" = {}
 "0x8279E5B8" = {}
+"0x8279F038" = {}
+"0x827F5B64" = {}
+"0x827F5C08" = {}
+"0x827F5C8C" = {}
+"0x827F5CF4" = {}
+"0x827F5D5C" = {}
+"0x827F5DC4" = {}
+"0x827F5E38" = {}
+"0x827F5F00" = {}
+"0x827F5FE0" = {}
+"0x827F60F0" = {}
+"0x827F6280" = {}
+"0x827F6424" = {}
+"0x827F6570" = {}
+"0x827F65F8" = {}
+"0x827F6690" = {}
+"0x827F8334" = {}
+"0x82C518CC" = {}
 "0x82C62350" = {}
+"0x82D3F968" = {}
 "0x831CE980" = {}
 "0x831CF998" = {}
 "0x831D7800" = {}
 "0x831DA288" = {}
+"0x8357FDF0" = {}
+"0x8357FDF8" = {}
+"0x8357FE00" = {}
+"0x8357FE08" = {}
+"0x8357FE18" = {}
+"0x8357FE20" = {}
+"0x8357FE80" = {}
 "0x83584F10" = {}
+"0x83584F20" = {}
+"0x83584F28" = {}
+"0x83584F30" = {}
+"0x83584F38" = {}
+"0x83584F40" = {}
 "0x83584F48" = {}
+"0x835862B8" = {}
+"0x835862C8" = {}
+"0x835862D0" = {}
+"0x835862D8" = {}
+"0x835999E0" = {}
+"0x835999E8" = {}
+"0x8359BABC" = {}
 "0x83804B68" = {}
+"0x83A4F9BC" = {}
 "0x83A7BC58" = {}
 "0x83A7BFA0" = {}
